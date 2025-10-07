@@ -1,6 +1,13 @@
-numpy==2.3.3
-scipy==1.16.2
+# Qt Quick 3D - Официальная версия 6.9.3
 pyside6==6.9.3
-PyOpenGL==3.1.10
-PyOpenGL-accelerate==3.1.10
-matplotlib==3.10.6
+shiboken6==6.9.3
+qtpy>=2.4.0
+
+# Научные библиотеки
+numpy>=2.3.0
+scipy>=1.16.0
+matplotlib>=3.10.0
+
+# OpenGL (для совместимости)
+PyOpenGL>=3.1.10
+PyOpenGL-accelerate>=3.1.10

@@ -14,6 +14,7 @@ from PySide6.QtQuickWidgets import QQuickWidget
 import logging
 import json
 import numpy as np
+import math  # ✨ НОВОЕ: для конвертации амплитуды
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -180,45 +181,89 @@ class MainWindow(QMainWindow):
         print("    ✅ Система сплиттеров создана (горизонтальный + вертикальный)")
 
     def _setup_qml_3d_view(self):
-        """Setup Qt Quick 3D full suspension scene"""
-        print("    [QML] Загрузка main.qml...")
+        """Setup Qt Quick 3D full suspension scene using official 6.9.3 features"""
+        print("    [QML] Загрузка main_official.qml...")
         
         try:
             self._qquick_widget = QQuickWidget(self)
             self._qquick_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
             
-            qml_path = Path("assets/qml/main.qml")
-            if not qml_path.exists():
-                raise FileNotFoundError(f"QML файл не найден: {qml_path.absolute()}")
+            # Try official QML first, fallback to compatible version
+            qml_files = [
+                Path("assets/qml/main_official.qml"),
+                Path("assets/qml/main.qml")
+            ]
+            
+            qml_path = None
+            for path in qml_files:
+                if path.exists():
+                    qml_path = path
+                    print(f"    Найден QML файл: {qml_path}")
+                    break
+            
+            if not qml_path:
+                raise FileNotFoundError("QML файлы не найдены")
             
             qml_url = QUrl.fromLocalFile(str(qml_path.absolute()))
-            print(f"    Загрузка main.qml: {qml_url.toString()}")
+            print(f"    Загрузка QML: {qml_url.toString()}")
             
             self._qquick_widget.setSource(qml_url)
             
+            # Check for QML errors
             if self._qquick_widget.status() == QQuickWidget.Status.Error:
                 errors = self._qquick_widget.errors()
                 error_msg = "\n".join(str(e) for e in errors)
-                raise RuntimeError(f"Ошибки QML:\n{error_msg}")
+                print(f"    [QML ERRORS]: {error_msg}")
+                
+                # Try fallback if official version fails
+                if qml_path.name == "main_official.qml":
+                    print("    Пробуем совместимую версию...")
+                    fallback_path = Path("assets/qml/main.qml")
+                    if fallback_path.exists():
+                        fallback_url = QUrl.fromLocalFile(str(fallback_path.absolute()))
+                        self._qquick_widget.setSource(fallback_url)
+                        
+                        if self._qquick_widget.status() != QQuickWidget.Status.Error:
+                            print("    ✅ Совместимая версия загружена")
+                        else:
+                            raise RuntimeError(f"Ошибки QML:\n{error_msg}")
+                    else:
+                        raise RuntimeError(f"Ошибки QML:\n{error_msg}")
+                else:
+                    raise RuntimeError(f"Ошибки QML:\n{error_msg}")
             
             self._qml_root_object = self._qquick_widget.rootObject()
             if not self._qml_root_object:
                 raise RuntimeError("Не удалось получить корневой объект QML")
             
-            print("    [OK] main.qml загружен успешно")
+            print(f"    [OK] {qml_path.name} загружен успешно")
+            
+            # Log Qt Quick 3D features
+            try:
+                from PySide6.QtCore import qVersion
+                print(f"    Qt версия: {qVersion()}")
+                print(f"    Qt Quick 3D функции: PBR, HDR, Post-processing")
+            except:
+                pass
             
         except Exception as e:
-            print(f"    [ERROR] Ошибка загрузки main.qml: {e}")
+            print(f"    [ERROR] Ошибка загрузки QML: {e}")
             import traceback
             traceback.print_exc()
             
-            # Fallback
+            # Fallback widget
             fallback = QLabel(
-                "Ошибка загрузки 3D сцены\n\n"
-                "Проверьте консоль для деталей."
+                "❌ Ошибка загрузки Qt Quick 3D сцены\n\n"
+                f"Ошибка: {str(e)}\n\n"
+                "Проверьте консоль для деталей.\n"
+                "Убедитесь, что Qt Quick 3D 6.9.3 установлен корректно."
             )
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            fallback.setStyleSheet("background: #1a1a2e; color: #ff6b6b; font-size: 14px; padding: 20px;")
+            fallback.setStyleSheet(
+                "background: #2c3e50; color: #e74c3c; "
+                "font-size: 14px; padding: 20px; "
+                "border: 2px solid #e74c3c; border-radius: 10px;"
+            )
             self._qquick_widget = fallback
             print("    [WARNING] Использован запасной виджет")
 
@@ -970,27 +1015,32 @@ class MainWindow(QMainWindow):
         # Обновляем параметры анимации в QML сцене
         if self._qml_root_object:
             try:
-                # Амплитуда: конвертируем метры в градусы (примерное преобразование)
-                # Для подвески обычно 0.05м = ~5° угла рычага
+                # ✨ ИСПРАВЛЕНО: Амплитуда - правильная конвертация метры → градусы
                 if 'amplitude' in animation_params:
                     amplitude_m = animation_params['amplitude']
-                    amplitude_deg = amplitude_m * 100  # 0.05м = 5°
+                    # Физически обоснованная конвертация:
+                    # 0.05м хода колеса ≈ 8° угла рычага (для рычага 0.8м)
+                    lever_length_m = self.geometry_converter.current_geometry.get('leverLength', 800.0) / 1000.0  # мм→м
+                    amplitude_deg = math.degrees(math.asin(amplitude_m / lever_length_m)) if amplitude_m < lever_length_m else 15.0
+                    # Ограничиваем разумными пределами
+                    amplitude_deg = max(1.0, min(25.0, amplitude_deg))
+                    
                     self._qml_root_object.setProperty("userAmplitude", amplitude_deg)
-                    print(f"   ✅ Амплитуда: {amplitude_m}м → {amplitude_deg}°")
+                    print(f"   ✅ Амплитуда: {amplitude_m}м → {amplitude_deg:.1f}° (рычаг {lever_length_m:.2f}м)")
                 
-                # Частота (Hz)
+                # Частота (Hz) - без изменений
                 if 'frequency' in animation_params:
                     frequency = animation_params['frequency']
                     self._qml_root_object.setProperty("userFrequency", frequency)
                     print(f"   ✅ Частота: {frequency} Гц")
                 
-                # Глобальная фаза (градусы)
+                # Глобальная фаза (градусы) - без изменений
                 if 'phase' in animation_params:
                     phase = animation_params['phase']
                     self._qml_root_object.setProperty("userPhaseGlobal", phase)
                     print(f"   ✅ Глобальная фаза: {phase}°")
                 
-                # Фазы для каждого колеса (градусы)
+                # Фазы для каждого колеса (градусы) - без изменений
                 if 'lf_phase' in animation_params:
                     self._qml_root_object.setProperty("userPhaseFL", animation_params['lf_phase'])
                     print(f"   ✅ Фаза ЛП: {animation_params['lf_phase']}°")

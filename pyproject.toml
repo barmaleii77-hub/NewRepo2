@@ -4,20 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pneumostabsim"
-version = "1.0.0"  
-description = "Pneumatic Stabilizer Simulator"
+version = "2.1.0"  # Версия с последним Qt Quick 3D
+description = "Pneumatic Stabilizer Simulator with Advanced Qt Quick 3D"
 authors = [
     {name = "PneumoStabSim Team"}
 ]
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "numpy==2.3.3",
-    "scipy==1.16.2", 
-    "pyside6==6.9.3",
-    "PyOpenGL==3.1.10",
-    "PyOpenGL-accelerate==3.1.10",
-    "matplotlib==3.10.6"
+    "numpy>=2.3.0",
+    "scipy>=1.16.0", 
+    "pyside6>=6.10.0",  # Последняя версия
+    "shiboken6>=6.10.0",
+    "qtpy>=2.4.0",
+    "PyOpenGL>=3.1.10",
+    "PyOpenGL-accelerate>=3.1.10",
+    "matplotlib>=3.10.0"
 ]
 
 [project.urls]
@@ -26,3 +28,11 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = [""]
 include = ["src*", "app*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0"
+]
