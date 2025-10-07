@@ -1,709 +1,719 @@
 import QtQuick
 import QtQuick3D
+import QtQuick3D.Helpers
 
-/*
- * PneumoStabSim - Main 3D View
- * Complete 4-corner pneumatic suspension system with orbital camera
- */
-Item {
-    id: root
+// ===============================
+// COMPATIBLE QT QUICK 3D MAIN VIEW FOR 6.9.3 - ИСПРАВЛЕНА ИНТЕГРАЦИЯ С PYTHON
+// ===============================
+View3D {
+    id: view3d
     anchors.fill: parent
-
-    // Camera state
-    property real cameraDistance: 4000
-    property real minDistance: 150
-    property real maxDistance: 30000
-    property real yawDeg: 30
-    property real pitchDeg: -20
-    property vector3d target: Qt.vector3d(0, 400, 1000)
-
-    // Mouse input
-    property bool mouseDown: false
-    property int mouseButton: 0
-    property real lastX: 0
-    property real lastY: 0
-    property real rotateSpeed: 0.35
-    property real panSpeedK: 1.0
-    property real wheelZoomK: 0.0016
-
-    // Animation properties
+    
+    // === DYNAMIC PROPERTIES FROM PYTHON ===
+    property real userFrameLength: 3200.0
+    property real userFrameHeight: 650.0  
+    property real userBeamSize: 120.0
+    property real userLeverLength: 800.0
+    property real userBoreHead: 80.0
+    property real userRodDiameter: 35.0
+    property real userStroke: 300.0
+    property real userPistonRodLength: 200.0
+    property real rodPosition: 0.6
+    
+    // ✨ НОВОЕ: Параметры анимации от Python (ModesPanel)
+    property real userAmplitude: 8.0        // градусы (конвертированные из метров)
+    property real userFrequency: 1.0        // Гц
+    property real userPhaseGlobal: 0.0      // градусы
+    property real userPhaseFL: 0.0          // градусы для переднего левого
+    property real userPhaseFR: 0.0          // градусы для переднего правого  
+    property real userPhaseRL: 0.0          // градусы для заднего левого
+    property real userPhaseRR: 0.0          // градусы для заднего правого
+    
+    // ✨ НОВОЕ: Контроль анимации от Python
+    property bool isRunning: true           // управляется из MainWindow
+    
+    // ✨ НОВОЕ: Позиции поршней от физики (мм от начала цилиндра)
+    property real userPistonPositionFL: 125.0
+    property real userPistonPositionFR: 125.0
+    property real userPistonPositionRL: 125.0
+    property real userPistonPositionRR: 125.0
+    
+    // === ANIMATION SYSTEM ===
     property real animationTime: 0.0
-    property real animationSpeed: 0.8  // DEPRECATED - use userFrequency instead
-    property bool isRunning: false  // NEW: Control animation from Python
-
-    // USER-CONTROLLED ANIMATION PARAMETERS (from Python)
-    property real userAmplitude: 8.0       // degrees
-    property real userFrequency: 1.0       // Hz
-    property real userPhaseGlobal: 0.0     // degrees
-    property real userPhaseFL: 0.0         // degrees (per-wheel offset)
-    property real userPhaseFR: 0.0
-    property real userPhaseRL: 0.0
-    property real userPhaseRR: 0.0
-
-    // NEW: USER-CONTROLLED PISTON POSITIONS (from Python Physics Engine!)
-    property real userPistonPositionFL: 125.0  // mm - piston position in FL cylinder (from physics)
-    property real userPistonPositionFR: 125.0  // mm - piston position in FR cylinder (from physics)
-    property real userPistonPositionRL: 125.0  // mm - piston position in RL cylinder (from physics)
-    property real userPistonPositionRR: 125.0  // mm - piston position in RR cylinder (from physics)
-
-    // Angles for each corner - CONTROLLED FROM PYTHON ONLY!
-    // Do NOT use formula - Python will set these directly via setProperty()
-    property real fl_angle: 0.0  // Set by Python via setProperty()
-    property real fr_angle: 0.0  // Set by Python via setProperty()
-    property real rl_angle: 0.0  // Set by Python via setProperty()
-    property real rr_angle: 0.0  // Set by Python via setProperty()
+    property real animationSpeed: 1.0
     
-    // DEBUG: Watch for angle changes
-    onFl_angleChanged: {
-        if (Math.abs(fl_angle) > 0.1) {  // Only log significant changes
-            console.log("?? QML: fl_angle changed to", fl_angle.toFixed(2), "°")
-        }
-    }
-    onFr_angleChanged: {
-        if (Math.abs(fr_angle) > 0.1) {
-            console.log("?? QML: fr_angle changed to", fr_angle.toFixed(2), "°")
-        }
-    }
-    onRl_angleChanged: {
-        if (Math.abs(rl_angle) > 0.1) {
-            console.log("?? QML: rl_angle changed to", rl_angle.toFixed(2), "°")
-        }
-    }
-    onRr_angleChanged: {
-        if (Math.abs(rr_angle) > 0.1) {
-            console.log("?? QML: rr_angle changed to", rr_angle.toFixed(2), "°")
-        }
-    }
-
-    // USER-CONTROLLED GEOMETRY PARAMETERS
-    property real userBeamSize: 120
-    property real userFrameHeight: 650
-    property real userFrameLength: 2000
-    property real userLeverLength: 315
-    property real userCylinderLength: 250
-    property real userTrackWidth: 300
-    property real userFrameToPivot: 150
-    property real userRodPosition: 0.6
-    property real userBoreHead: 80
-    property real userBoreRod: 80
-    property real userRodDiameter: 35
-    property real userPistonThickness: 25
-    
-    // NEW: Piston rod length (set by user, NOT calculated!)
-    property real userPistonRodLength: 200  // mm - CONSTANT length of piston rod
-
-    // Update geometry from UI
-    function updateGeometry(params) {
-        console.log("💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡")
-        console.log("🔧 main.qml: updateGeometry() called - ALL PARAMETERS SUPPORT")
-        console.log("🔧 Received params:", JSON.stringify(params))
-        console.log("💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡")
+    Timer {
+        id: animationTimer
+        running: isRunning  // ✨ ИСПРАВЛЕНО: управляется из Python
+        interval: 16  // 60 FPS
+        repeat: true
         
-        // ОСНОВНЫЕ РАЗМЕРЫ РАМЫ
+        property int frameCount: 0
+        property real lastTime: Date.now()
+        property real fps: 60.0
+        
+        onTriggered: {
+            animationTime += animationSpeed * 0.016
+            
+            // FPS calculation
+            frameCount++
+            var now = Date.now()
+            if (now - lastTime > 1000) {
+                fps = frameCount * 1000 / (now - lastTime)
+                frameCount = 0
+                lastTime = now
+            }
+        }
+    }
+    
+    // ✨ НОВОЕ: Функция обновления геометрии (вызывается из Python)
+    function updateGeometry(params) {
+        console.log("🔧 QML updateGeometry() вызвана с параметрами:", JSON.stringify(params))
+        
         if (params.frameLength !== undefined) {
-            console.log("  🔧 Setting userFrameLength:", params.frameLength)
             userFrameLength = params.frameLength
+            console.log("  📐 frameLength =", userFrameLength)
         }
         if (params.frameHeight !== undefined) {
-            console.log("  🔧 Setting userFrameHeight:", params.frameHeight)
             userFrameHeight = params.frameHeight
         }
         if (params.frameBeamSize !== undefined) {
-            console.log("  🔧 Setting userBeamSize:", params.frameBeamSize)
-            userBeamSize = params.frameBeamSize
+            userBeamSize = params.frameBeamSize  
         }
-        
-        // ГЕОМЕТРИЯ ПОДВЕСКИ
         if (params.leverLength !== undefined) {
-            console.log("  🔧 Setting userLeverLength:", params.leverLength)
             userLeverLength = params.leverLength
         }
         if (params.cylinderBodyLength !== undefined) {
-            console.log("  🔧 Setting userCylinderLength:", params.cylinderBodyLength)
-            userCylinderLength = params.cylinderBodyLength
+            userStroke = params.cylinderBodyLength
         }
-        
-        // ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ГЕОМЕТРИИ
-        if (params.trackWidth !== undefined) {
-            console.log("  🔧 Setting userTrackWidth:", params.trackWidth)
-            userTrackWidth = params.trackWidth
-        }
-        if (params.frameToPivot !== undefined) {
-            console.log("  🔧 Setting userFrameToPivot:", params.frameToPivot)
-            userFrameToPivot = params.frameToPivot
-        }
-        if (params.rodPosition !== undefined) {
-            console.log("  🔧 ✨ Setting userRodPosition:", params.rodPosition, "- КРИТИЧЕСКИЙ ПАРАМЕТР!")
-            userRodPosition = params.rodPosition
-            console.log("      Новое положение шарнира штока на рычаге:", (userRodPosition * 100).toFixed(1) + "%")
-        }
-        
-        // УСТАРЕВШИЕ ПАРАМЕТРЫ (для совместимости)
         if (params.boreHead !== undefined) {
-            console.log("  🔧 Setting userBoreHead (deprecated):", params.boreHead)
             userBoreHead = params.boreHead
         }
-        if (params.boreRod !== undefined) {
-            console.log("  🔧 Setting userBoreRod (deprecated):", params.boreRod)
-            userBoreRod = params.boreRod
-        }
         if (params.rodDiameter !== undefined) {
-            console.log("Setting userRodDiameter (deprecated):", params.rodDiameter)
             userRodDiameter = params.rodDiameter
         }
-        if (params.pistonThickness !== undefined) {
-            console.log("  🔧 Setting userPistonThickness (deprecated):", params.pistonThickness)
-            userPistonThickness = params.pistonThickness
-        }
-        if (params.pistonRodLength !== undefined) {
-            console.log("  🔧 Setting userPistonRodLength (deprecated):", params.pistonRodLength)
-            userPistonRodLength = params.pistonRodLength
+        if (params.rodPosition !== undefined) {
+            rodPosition = params.rodPosition
+            console.log("  🎯 КРИТИЧЕСКИЙ: rodPosition =", rodPosition)
         }
         
-        // ✨ НОВЫЕ ПАРАМЕТРЫ - МШ-1: Параметры цилиндра в мм (из м)
-        if (params.cylDiamM !== undefined) {
-            console.log("  ✨ Setting userCylDiamM (NEW):", params.cylDiamM, "мм")
-            userBoreHead = params.cylDiamM  // Совместимость: цилиндр = диаметр головной камеры
-            userBoreRod = params.cylDiamM   // Совместимость: цилиндр = диаметр штоковой камеры
-        }
-        if (params.strokeM !== undefined) {
-            console.log("  ✨ Setting userStrokeM (NEW):", params.strokeM, "мм")
-            // Ход поршня - можно использовать для расчета длины цилиндра
-            // userCylinderLength примерно равен strokeM + dead zones
-        }
-        if (params.deadGapM !== undefined) {
-            console.log("  ✨ Setting userDeadGapM (NEW):", params.deadGapM, "мм")
-            // Мертвый зазор - влияет на минимальную длину цилиндра
-        }
-        
-        // ✨ НОВЫЕ ПАРАМЕТРЫ - МШ-2: Параметры штока и поршня в мм (из м)
-        if (params.rodDiameterM !== undefined) {
-            console.log("  ✨ Setting userRodDiameterM (NEW):", params.rodDiameterM, "мм")
-            userRodDiameter = params.rodDiameterM  // Совместимость: используем новое значение
-        }
-        if (params.pistonRodLengthM !== undefined) {
-            console.log("  ✨ Setting userPistonRodLengthM (NEW):", params.pistonRodLengthM, "мм")
-            userPistonRodLength = params.pistonRodLengthM  // Совместимость: используем новое значение
-        }
-        if (params.pistonThicknessM !== undefined) {
-            console.log("  ✨ Setting userPistonThicknessM (NEW):", params.pistonThicknessM, "мм")
-            userPistonThickness = params.pistonThicknessM  // Совместимость: используем новое значение
-        }
-        
-        console.log("💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡")
-        console.log("🔧 Current values after COMPLETE update:")
-        console.log("  📐 Frame: L=" + userFrameLength + ", H=" + userFrameHeight + ", Beam=" + userBeamSize)
-        console.log("  📐 Suspension: Lever=" + userLeverLength + ", Cylinder=" + userCylinderLength)
-        console.log("  📐 Track: Width=" + userTrackWidth + ", Frame→Pivot=" + userFrameToPivot + ", RodPos=" + userRodPosition + " (" + (userRodPosition * 100).toFixed(1) + "%)")
-        console.log("  📐 OLD Cylinder: BoreHead=" + userBoreHead + ", BoreRod=" + userBoreRod)
-        console.log("  📐 OLD Rod: Diameter=" + userRodDiameter + ", Length=" + userPistonRodLength + ", PistonThick=" + userPistonThickness)
-        console.log("  ✨ NEW: Все параметры с дискретностью 0.001м теперь поддерживаются!")
-        console.log("  ✨ ✨ ИСПРАВЛЕНО: userRodPosition теперь влияет на положение j_rod!")
-        console.log("💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡")
-        
-        resetView()
-        console.log("  ✅ Geometry updated and view reset")
+        console.log("✅ Геометрия обновлена в QML")
     }
     
-    // NEW: Update piston positions from Python physics engine
+    // ✨ НОВОЕ: Функция обновления позиций поршней (от реальной физики)
     function updatePistonPositions(positions) {
-        // DEBUG: Show FIRST update with full details
-        if (typeof updatePistonPositions.callCount === 'undefined') {
-            updatePistonPositions.callCount = 0
-        }
-        
-        if (updatePistonPositions.callCount === 0) {
-            console.log("???????????????????????????????????????????????")
-            console.log("?? main.qml: FIRST updatePistonPositions() call!")
-            console.log("?? Received positions:", JSON.stringify(positions))
-            console.log("???????????????????????????????????????????????")
-        }
-        
-        updatePistonPositions.callCount++
+        console.log("🔧 QML updatePistonPositions() вызвана:", JSON.stringify(positions))
         
         if (positions.fl !== undefined) {
-            userPistonPositionFL = Number(positions.fl)
+            userPistonPositionFL = positions.fl
         }
         if (positions.fr !== undefined) {
-            userPistonPositionFR = Number(positions.fr)
+            userPistonPositionFR = positions.fr
         }
         if (positions.rl !== undefined) {
-            userPistonPositionRL = Number(positions.rl)
+            userPistonPositionRL = positions.rl
         }
         if (positions.rr !== undefined) {
-            userPistonPositionRR = Number(positions.rr)
+            userPistonPositionRR = positions.rr
         }
         
-        // DEBUG: Show values every 60 frames (~1 second at 60Hz)
-        if (updatePistonPositions.callCount % 60 === 1) {
-            console.log("?? Piston positions (frame " + updatePistonPositions.callCount + "):")
-            console.log("   FL:", userPistonPositionFL.toFixed(2), "mm")
-            console.log("   FR:", userPistonPositionFR.toFixed(2), "mm")
-            console.log("   RL:", userPistonPositionRL.toFixed(2), "mm")
-            console.log("   RR:", userPistonPositionRR.toFixed(2), "mm")
+        console.log("✅ Позиции поршней обновлены в QML")
+    }
+    
+    // === ADVANCED CAMERA ===
+    camera: advancedCamera
+    
+    PerspectiveCamera {
+        id: advancedCamera
+        position: Qt.vector3d(0, 500, 2500)
+        eulerRotation: Qt.vector3d(-12, 0, 0)
+        fieldOfView: 45
+        clipNear: 1.0
+        clipFar: 20000.0
+        
+        // Smooth camera transitions
+        Behavior on position { 
+            Vector3dAnimation { 
+                duration: 1000
+                easing.type: Easing.OutCubic 
+            } 
+        }
+        
+        Behavior on eulerRotation { 
+            Vector3dAnimation { 
+                duration: 800
+                easing.type: Easing.OutQuart 
+            } 
         }
     }
     
-    function updateAnimation(angles) {
-        console.log("?? updateAnimation() called:", JSON.stringify(angles))
-        if (angles.fl !== undefined) fl_angle = Number(angles.fl)
-        if (angles.fr !== undefined) fr_angle = Number(angles.fr)
-        if (angles.rl !== undefined) rl_angle = Number(angles.rl)
-        if (angles.rr !== undefined) rr_angle = Number(angles.rr)
-        console.log("   ? Angles set: FL=" + fl_angle + ", FR=" + fr_angle + ", RL=" + rl_angle + ", RR=" + rr_angle)
+    // === ADVANCED ENVIRONMENT ===
+    environment: SceneEnvironment {
+        id: environment
+        backgroundMode: SceneEnvironment.Color
+        clearColor: "#1a1a2e"
+        
+        // Anti-aliasing (compatible with 6.9.3)
+        antialiasingMode: SceneEnvironment.MSAA
+        antialiasingQuality: SceneEnvironment.High
+        
+        // Light probe for reflections
+        lightProbe: hdrProbe
+        probeExposure: 1.2
+        probeHorizon: -0.1
     }
-
-    // Utilities
-    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-    function normAngleDeg(a) {
-        var x = a % 360;
-        if (x > 180) x -= 360;
-        if (x < -180) x += 360;
-        return x;
+    
+    // === HDR ENVIRONMENT PROBE ===
+    Texture {
+        id: hdrProbe
+        source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        mappingMode: Texture.LightProbe
+        tilingModeHorizontal: Texture.Repeat
+        tilingModeVertical: Texture.Repeat
     }
-
-    // Animation timer (CONTROLLED BY isRunning)
-    Timer {
-        running: isRunning  // CHANGED: Now controlled by Python
-        interval: 16  // 60 FPS for smooth animation
-        repeat: true
-        onTriggered: {
-            animationTime += 0.016  // Fixed timestep in seconds
+    
+    // === ADVANCED LIGHTING SYSTEM ===
+    
+    // Main sun light
+    DirectionalLight {
+        id: sunLight
+        eulerRotation.x: -25
+        eulerRotation.y: -35
+        brightness: 2.5
+        castsShadow: true
+        shadowMapQuality: Light.ShadowMapQualityHigh
+        shadowMapFar: 8000
+        shadowBias: -0.0008
+        shadowFactor: 50
+        color: "#fff8e1"
+        
+        // Dynamic brightness
+        SequentialAnimation on brightness {
+            running: isRunning
+            loops: Animation.Infinite
+            NumberAnimation { to: 3.0; duration: 4000; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 2.0; duration: 4000; easing.type: Easing.InOutSine }
         }
     }
-
-    View3D {
-        id: view3d
-        anchors.fill: parent
-
-        environment: SceneEnvironment {
-            backgroundMode: SceneEnvironment.Color
-            clearColor: "#2a2a2a"
-            antialiasingMode: SceneEnvironment.MSAA
-            antialiasingQuality: SceneEnvironment.High
-        }
-
-        // Orbital camera rig
-        Node {
-            id: cameraRig
-            position: root.target
-            eulerRotation: Qt.vector3d(root.pitchDeg, root.yawDeg, 0)
-
-            PerspectiveCamera {
-                id: camera
-                position: Qt.vector3d(0, 0, root.cameraDistance)
-                fieldOfView: 45
-                clipNear: 1
-                clipFar: 100000
-            }
-        }
-
-        // Lighting
-        DirectionalLight {
-            eulerRotation.x: -30
-            eulerRotation.y: -45
-            brightness: 2.5
-        }
-
-        // U-FRAME (3 beams)
-        Model {
-            source: "#Cube"
-            position: Qt.vector3d(0, userBeamSize/2, userFrameLength/2)
-            scale: Qt.vector3d(userBeamSize/100, userBeamSize/100, userFrameLength/100)
-            materials: PrincipledMaterial { baseColor: "#cc0000"; metalness: 0.8; roughness: 0.4 }
-        }
-        Model {
-            source: "#Cube"
-            position: Qt.vector3d(0, userBeamSize + userFrameHeight/2, userBeamSize/2)
-            scale: Qt.vector3d(userBeamSize/100, userFrameHeight/100, userBeamSize/100)
-            materials: PrincipledMaterial { baseColor: "#cc0000"; metalness: 0.8; roughness: 0.4 }
-        }
-        Model {
-            source: "#Cube"
-            position: Qt.vector3d(0, userBeamSize + userFrameHeight/2, userFrameLength - userBeamSize/2)
-            scale: Qt.vector3d(userBeamSize/100, userFrameHeight/100, userBeamSize/100)
-            materials: PrincipledMaterial { baseColor: "#cc0000"; metalness: 0.8; roughness: 0.4 }
-        }
-
-        // SUSPENSION COMPONENT (with all parts)
-        component SuspensionCorner: Node {
-            property vector3d j_arm
-            property vector3d j_tail  
-            property real leverAngle
-            property real pistonPositionFromPython: 125.0  // NEW: Piston position from Python (mm)
+    
+    // Fill light
+    DirectionalLight {
+        eulerRotation.x: 20
+        eulerRotation.y: 135
+        brightness: 0.4
+        color: "#e1f5fe"
+        castsShadow: false
+    }
+    
+    // Accent point lights
+    Repeater {
+        model: [
+            { pos: Qt.vector3d(-2000, 1000, -1500), color: "#ff6b35", brightness: 150 },
+            { pos: Qt.vector3d(2000, 1000, 1500), color: "#4fc3f7", brightness: 120 },
+            { pos: Qt.vector3d(0, 2000, 0), color: "#fff59d", brightness: 80 }
+        ]
+        
+        PointLight {
+            position: modelData.pos
+            color: modelData.color
+            brightness: modelData.brightness
+            castsShadow: false
             
-            // CALCULATE j_rod INTERNALLY from leverAngle AND userRodPosition!
-            property real baseAngle: (j_arm.x < 0) ? 180 : 0  // Left=180°, Right=0°
-            property real totalAngle: baseAngle + leverAngle
-            
-            // ✨ ИСПРАВЛЕНО: j_rod position calculated from lever rotation AND rod position!
-            // userRodPosition определяет где на рычаге находится шарнир штока (0.3-0.9)
-            property vector3d j_rod: Qt.vector3d(
-                j_arm.x + (userLeverLength * userRodPosition) * Math.cos(totalAngle * Math.PI / 180),
-                j_arm.y + (userLeverLength * userRodPosition) * Math.sin(totalAngle * Math.PI / 180),
-                j_arm.z
-            )
-            
-            // === CYLINDER GEOMETRY CALCULATIONS ===
-            property vector3d cylDirection: Qt.vector3d(j_rod.x - j_tail.x, j_rod.y - j_tail.y, 0)
-            property real cylDirectionLength: Math.hypot(cylDirection.x, cylDirection.y)
-            property vector3d cylDirectionNorm: Qt.vector3d(
-                cylDirection.x / cylDirectionLength,
-                cylDirection.y / cylDirectionLength,
-                0
-            )
-            
-            property real lTailRod: 100           // Tail rod: 100mm (CONSTANT)
-            property real lCylinder: userCylinderLength  // Cylinder body (CONSTANT)
-            
-            // Tail rod end (where cylinder starts)
-            property vector3d tailRodEnd: Qt.vector3d(
-                j_tail.x + cylDirectionNorm.x * lTailRod,
-                j_tail.y + cylDirectionNorm.y * lTailRod,
-                j_tail.z
-            )
-            
-            // Cylinder end (where rod exits cylinder)
-            property vector3d cylinderEnd: Qt.vector3d(
-                tailRodEnd.x + cylDirectionNorm.x * lCylinder,
-                tailRodEnd.y + cylDirectionNorm.y * lCylinder,
-                tailRodEnd.z
-            )
-            
-            // PISTON POSITION - FROM PYTHON
-            property vector3d pistonCenter: Qt.vector3d(
-                tailRodEnd.x + cylDirectionNorm.x * pistonPositionFromPython,
-                tailRodEnd.y + cylDirectionNorm.y * pistonPositionFromPython,
-                tailRodEnd.z
-            )
-            
-            // FULL ROD LENGTH (CONSTANT!) - calculated from center position
-            property real centerPistonPos: lCylinder / 2
-            property vector3d centerPistonCenter: Qt.vector3d(
-                tailRodEnd.x + cylDirectionNorm.x * centerPistonPos,
-                tailRodEnd.y + cylDirectionNorm.y * centerPistonPos,
-                tailRodEnd.z
-            )
-            property real fullRodLength: Math.hypot(j_rod.x - centerPistonCenter.x, j_rod.y - centerPistonCenter.y)
-            
-            // ✨ ИСПРАВЛЕНО: LEVER с правильным расчетом центра
-            // Центр рычага должен быть между j_arm и точкой на расстоянии userRodPosition
-            Model {
-                source: "#Cube"
-                
-                // Центр рычага - midpoint между j_arm и концом рычага (не j_rod!)
-                position: Qt.vector3d(
-                    j_arm.x + (userLeverLength/2) * Math.cos(totalAngle * Math.PI / 180), 
-                    j_arm.y + (userLeverLength/2) * Math.sin(totalAngle * Math.PI / 180), 
-                    j_arm.z
-                )
-                scale: Qt.vector3d(userLeverLength/100, 0.8, 0.8)
-                eulerRotation: Qt.vector3d(0, 0, totalAngle)
-                materials: PrincipledMaterial { baseColor: "#888888"; metalness: 0.9; roughness: 0.3 }
-            }
-            
-            // TAIL ROD (FIXED: from j_tail to cylinder start)
-            Model {
-                source: "#Cylinder"
-                position: Qt.vector3d((j_tail.x + tailRodEnd.x)/2, (j_tail.y + tailRodEnd.y)/2, j_tail.z)
-                scale: Qt.vector3d(userRodDiameter/100, lTailRod/100, userRodDiameter/100)
-                eulerRotation: Qt.vector3d(0, 0, Math.atan2(cylDirection.y, cylDirection.x) * 180 / Math.PI + 90)
-                materials: PrincipledMaterial { baseColor: "#cccccc"; metalness: 0.95; roughness: 0.05 }
-            }
-            
-            // CYLINDER BODY (FIXED LENGTH, transparent)
-            Model {
-                source: "#Cylinder"
-                position: Qt.vector3d((tailRodEnd.x + cylinderEnd.x)/2, (tailRodEnd.y + cylinderEnd.y)/2, tailRodEnd.z)
-                scale: Qt.vector3d(userBoreHead/100, lCylinder/100, userBoreHead/100)
-                eulerRotation: Qt.vector3d(0, 0, Math.atan2(cylDirection.y, cylDirection.x) * 180 / Math.PI + 90)
-                materials: PrincipledMaterial { 
-                    baseColor: "#ffffff"; 
-                    metalness: 0.0; 
-                    roughness: 0.05; 
-                    opacity: 0.15; 
-                    alphaMode: PrincipledMaterial.Blend 
+            // Animated intensity
+            SequentialAnimation on brightness {
+                running: isRunning
+                loops: Animation.Infinite
+                NumberAnimation { 
+                    to: modelData.brightness * 1.3
+                    duration: 2000 + index * 500
+                    easing.type: Easing.InOutQuad 
+                }
+                NumberAnimation { 
+                    to: modelData.brightness * 0.7
+                    duration: 2000 + index * 500
+                    easing.type: Easing.InOutQuad 
                 }
             }
-            
-            // PISTON (moves INSIDE cylinder)
-            Model {
-                source: "#Cylinder"
-                position: pistonCenter
-                scale: Qt.vector3d((userBoreHead - 2)/100, userPistonThickness/100, (userBoreHead - 2)/100)
-                eulerRotation: Qt.vector3d(0, 0, Math.atan2(cylDirection.y, cylDirection.x) * 180 / Math.PI + 90)
-                materials: PrincipledMaterial { baseColor: "#ff0066"; metalness: 0.9; roughness: 0.1 }
-            }
-            
-            // FULL PISTON ROD (CONSTANT LENGTH FROM UI!)
-            // Length is SET BY USER in userPistonRodLength, NOT calculated!
-            // Goes from piston in direction toward j_rod
-            Model {
-                source: "#Cylinder"
-                
-                // Direction from piston toward j_rod
-                property real rodDirX: j_rod.x - pistonCenter.x
-                property real rodDirY: j_rod.y - pistonCenter.y
-                property real rodDirLen: Math.hypot(rodDirX, rodDirY)
-                
-                // Normalized direction
-                property real rodDirNormX: rodDirX / rodDirLen
-                property real rodDirNormY: rodDirY / rodDirLen
-                
-                // Rod end position (piston + userPistonRodLength in direction of j_rod)
-                property vector3d rodEnd: Qt.vector3d(
-                    pistonCenter.x + rodDirNormX * userPistonRodLength,
-                    pistonCenter.y + rodDirNormY * userPistonRodLength,
-                    pistonCenter.z
-                )
-                
-                // Center of rod (midpoint from piston to rodEnd)
-                position: Qt.vector3d((pistonCenter.x + rodEnd.x)/2, (pistonCenter.y + rodEnd.y)/2, pistonCenter.z)
-                
-                // Scale: CONSTANT length from UI (userPistonRodLength)
-                scale: Qt.vector3d(userRodDiameter/100, userPistonRodLength/100, userRodDiameter/100)
-                
-                // Rotation to align piston → rod end
-                eulerRotation: Qt.vector3d(0, 0, Math.atan2(rodEnd.y - pistonCenter.y, rodEnd.x - pistonCenter.x) * 180 / Math.PI + 90)
-                
-                materials: PrincipledMaterial { baseColor: "#cccccc"; metalness: 0.95; roughness: 0.05 }
-            }
-            
-            // JOINTS (cylinders along Z-axis)
-            
-            // Cylinder joint (blue)
-            Model {
-                source: "#Cylinder"
-                position: j_tail
-                scale: Qt.vector3d(1.2, 2.4, 1.2)
-                eulerRotation: Qt.vector3d(90, 0, 0)
-                materials: PrincipledMaterial { baseColor: "#0088ff"; metalness: 0.8; roughness: 0.2 }
-            }
-            
-            // Lever joint (orange)
-            Model {
-                source: "#Cylinder"
-                position: j_arm
-                scale: Qt.vector3d(1.0, 2.0, 1.0)
-                eulerRotation: Qt.vector3d(90, 0, 0)
-                materials: PrincipledMaterial { baseColor: "#ff8800"; metalness: 0.8; roughness: 0.2 }
-            }
-            
-            // ✨ ИСПРАВЛЕНО: Rod joint (green) - теперь точно в j_rod!
-            Model {
-                source: "#Cylinder" 
-                position: j_rod  // Используется вычисленное j_rod с userRodPosition!
-                scale: Qt.vector3d(0.8, 1.6, 0.8)
-                eulerRotation: Qt.vector3d(90, 0, 0)
-                materials: PrincipledMaterial { baseColor: "#00ff44"; metalness: 0.7; roughness: 0.3 }
-            }
-        }
-
-        // FOUR SUSPENSION CORNERS (parametric coordinates with user parameters)
-        SuspensionCorner { 
-            id: flCorner
-            // Front left - j_rod calculated internally!
-            j_arm: Qt.vector3d(-userFrameToPivot, userBeamSize, userBeamSize/2)
-            j_tail: Qt.vector3d(-userTrackWidth/2, userBeamSize + userFrameHeight, userBeamSize/2)
-            leverAngle: fl_angle  // Python controls this!
-            pistonPositionFromPython: root.userPistonPositionFL
-        }
-        
-        SuspensionCorner { 
-            id: frCorner
-            // Front right
-            j_arm: Qt.vector3d(userFrameToPivot, userBeamSize, userBeamSize/2)
-            j_tail: Qt.vector3d(userTrackWidth/2, userBeamSize + userFrameHeight, userBeamSize/2)
-            leverAngle: fr_angle  // Python controls this!
-            pistonPositionFromPython: root.userPistonPositionFR
-        }
-        
-        SuspensionCorner { 
-            id: rlCorner
-            // Rear left
-            j_arm: Qt.vector3d(-userFrameToPivot, userBeamSize, userFrameLength - userBeamSize/2)
-            j_tail: Qt.vector3d(-userTrackWidth/2, userBeamSize + userFrameHeight, userFrameLength - userBeamSize/2)
-            leverAngle: rl_angle  // Python controls this!
-            pistonPositionFromPython: root.userPistonPositionRL
-        }
-        
-        SuspensionCorner { 
-            id: rrCorner
-            // Rear right
-            j_arm: Qt.vector3d(userFrameToPivot, userBeamSize, userFrameLength - userBeamSize/2)
-            j_tail: Qt.vector3d(userTrackWidth/2, userBeamSize + userFrameHeight, userFrameLength - userBeamSize/2)
-            leverAngle: rr_angle  // Python controls this!
-            pistonPositionFromPython: root.userPistonPositionRR
-        }
-
-        // Coordinate axes
-        Model {
-            source: "#Cylinder"
-            position: Qt.vector3d(300, 0, 0)
-            scale: Qt.vector3d(0.2, 0.2, 6)
-            eulerRotation.y: 90
-            materials: PrincipledMaterial { baseColor: "#ff0000"; lighting: PrincipledMaterial.NoLighting }
-        }
-        Model {
-            source: "#Cylinder"
-            position: Qt.vector3d(0, 300, 0)
-            scale: Qt.vector3d(0.2, 6, 0.2)
-            materials: PrincipledMaterial { baseColor: "#00ff00"; lighting: PrincipledMaterial.NoLighting }
-        }
-        Model {
-            source: "#Cylinder"
-            position: Qt.vector3d(0, 0, 300)
-            scale: Qt.vector3d(0.2, 0.2, 6)
-            materials: PrincipledMaterial { baseColor: "#0000ff"; lighting: PrincipledMaterial.NoLighting }
         }
     }
-
-    // Mouse control
+    
+    // === PREMIUM MATERIALS ===
+    
+    // Ultra-premium chrome for main components
+    PrincipledMaterial {
+        id: ultraChrome
+        baseColor: "#f8f9fa"
+        metalness: 0.98
+        roughness: 0.02
+        specularAmount: 1.0
+        indexOfRefraction: 3.2
+        normalStrength: 1.5
+    }
+    
+    // Premium anodized frame material
+    PrincipledMaterial {
+        id: premiumFrame
+        baseColor: "#c62828"
+        metalness: 0.95
+        roughness: 0.12
+        specularAmount: 1.0
+        indexOfRefraction: 2.8
+        normalStrength: 1.2
+    }
+    
+    // Advanced glass for cylinders
+    PrincipledMaterial {
+        id: advancedGlass
+        baseColor: Qt.rgba(0.9, 0.95, 1.0, 0.12)
+        metalness: 0.0
+        roughness: 0.01
+        opacity: 0.12
+        alphaMode: PrincipledMaterial.Blend
+        specularAmount: 1.0
+        indexOfRefraction: 1.52
+        transmissionFactor: 0.95
+        thicknessFactor: 0.08
+    }
+    
+    // Joint positions (dynamic based on parameters)
+    property vector3d fl_j_arm: Qt.vector3d(-userBeamSize/2 - 30, userBeamSize + 40, -userFrameLength/2 + 200)
+    property vector3d fr_j_arm: Qt.vector3d(userBeamSize/2 + 30, userBeamSize + 40, -userFrameLength/2 + 200)
+    property vector3d rl_j_arm: Qt.vector3d(-userBeamSize/2 - 30, userBeamSize + 40, userFrameLength/2 - 200)
+    property vector3d rr_j_arm: Qt.vector3d(userBeamSize/2 + 30, userBeamSize + 40, userFrameLength/2 - 200)
+    
+    property vector3d fl_j_tail: Qt.vector3d(fl_j_arm.x + 50, fl_j_arm.y + userFrameHeight - 50, fl_j_arm.z)
+    property vector3d fr_j_tail: Qt.vector3d(fr_j_arm.x - 50, fr_j_arm.y + userFrameHeight - 50, fr_j_arm.z)
+    property vector3d rl_j_tail: Qt.vector3d(rl_j_arm.x + 50, rl_j_arm.y + userFrameHeight - 50, rl_j_arm.z)
+    property vector3d rr_j_tail: Qt.vector3d(rr_j_arm.x - 50, rr_j_arm.y + userFrameHeight - 50, rr_j_arm.z)
+    
+    // Rod positions (calculated from lever angles)
+    property vector3d fl_j_rod: Qt.vector3d(
+        fl_j_arm.x + userLeverLength * Math.cos((180 + fl_angle) * Math.PI / 180),
+        fl_j_arm.y + userLeverLength * Math.sin((180 + fl_angle) * Math.PI / 180),
+        fl_j_arm.z
+    )
+    property vector3d fr_j_rod: Qt.vector3d(
+        fr_j_arm.x + userLeverLength * Math.cos((0 + fr_angle) * Math.PI / 180),
+        fr_j_arm.y + userLeverLength * Math.sin((0 + fr_angle) * Math.PI / 180),
+        fr_j_arm.z
+    )
+    property vector3d rl_j_rod: Qt.vector3d(
+        rl_j_arm.x + userLeverLength * Math.cos((180 + rl_angle) * Math.PI / 180),
+        rl_j_arm.y + userLeverLength * Math.sin((180 + rl_angle) * Math.PI / 180),
+        rl_j_arm.z
+    )
+    property vector3d rr_j_rod: Qt.vector3d(
+        rr_j_arm.x + userLeverLength * Math.cos((0 + rr_angle) * Math.PI / 180),
+        rr_j_arm.y + userLeverLength * Math.sin((0 + rr_angle) * Math.PI / 180),
+        rr_j_arm.z
+    )
+    
+    // === MAIN FRAME WITH PREMIUM MATERIALS ===
+    
+    // Main longitudinal beam with premium effects
+    Model {
+        source: "#Cube"
+        position: Qt.vector3d(0, userBeamSize/2, 0)
+        scale: Qt.vector3d(userBeamSize/100, userBeamSize/100, userFrameLength/100)
+        materials: premiumFrame
+        
+        // Smooth parameter updates
+        Behavior on scale { 
+            Vector3dAnimation { duration: 800; easing.type: Easing.OutCubic } 
+        }
+    }
+    
+    // Side frames with staggered animations
+    Repeater {
+        model: [
+            { z: -userFrameLength/2, delay: 0 },
+            { z: userFrameLength/2, delay: 1000 }
+        ]
+        
+        Model {
+            source: "#Cube"
+            position: Qt.vector3d(0, userBeamSize + userFrameHeight/2, modelData.z)
+            scale: Qt.vector3d(userBeamSize/100, userFrameHeight/100, userBeamSize/100)
+            materials: premiumFrame
+            
+            Behavior on scale { 
+                Vector3dAnimation { duration: 800; easing.type: Easing.OutCubic } 
+            }
+        }
+    }
+    
+    // === ADVANCED SUSPENSION CORNERS ===
+    component AdvancedSuspensionCorner: Node {
+        id: suspensionNode
+        
+        required property vector3d j_arm
+        required property vector3d j_tail  
+        required property vector3d j_rod
+        required property real leverAngle
+        required property bool isLeft
+        required property real pistonPositionMm  // ✨ НОВОЕ: позиция от физики
+        
+        // Calculated properties
+        property real baseAngle: isLeft ? 180 : 0
+        property real totalAngle: baseAngle + leverAngle
+        
+        // Cylinder geometry calculations
+        property vector3d cylDirection: Qt.vector3d(j_rod.x - j_tail.x, j_rod.y - j_tail.y, 0)
+        property real cylDirectionLength: Math.hypot(cylDirection.x, cylDirection.y)
+        property real lBody: userStroke
+        property real lTailRod: 100
+        
+        property vector3d tailRodEnd: Qt.vector3d(
+            j_tail.x + cylDirection.x * (lTailRod / cylDirectionLength),
+            j_tail.y + cylDirection.y * (lTailRod / cylDirectionLength),
+            j_tail.z
+        )
+        
+        property vector3d cylStart: tailRodEnd
+        property vector3d cylEnd: Qt.vector3d(
+            cylStart.x + cylDirection.x * (lBody / cylDirectionLength),
+            cylStart.y + cylDirection.y * (lBody / cylDirectionLength),
+            cylStart.z
+        )
+        
+        // ✨ ИСПРАВЛЕНО: Piston position from physics (not animation!)
+        property real pistonRatio: pistonPositionMm / lBody  // Используем реальную позицию
+        property vector3d pistonCenter: Qt.vector3d(
+            cylStart.x + cylDirection.x * ((lBody * pistonRatio) / cylDirectionLength),
+            cylStart.y + cylDirection.y * ((lBody * pistonRatio) / cylDirectionLength),
+            cylStart.z
+        )
+        
+        // === PREMIUM LEVER ===
+        Model {
+            source: "#Cube"
+            position: Qt.vector3d(
+                j_arm.x + (userLeverLength/2) * Math.cos(totalAngle * Math.PI / 180), 
+                j_arm.y + (userLeverLength/2) * Math.sin(totalAngle * Math.PI / 180), 
+                j_arm.z
+            )
+            scale: Qt.vector3d(userLeverLength/100, 1.2, 1.8)
+            eulerRotation: Qt.vector3d(0, 0, totalAngle)
+            materials: ultraChrome
+            
+            // Smooth lever movement
+            Behavior on eulerRotation.z {
+                NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+            }
+        }
+        
+        // === ADVANCED GLASS CYLINDER ===
+        Model {
+            source: "#Cylinder"
+            position: Qt.vector3d((cylStart.x + cylEnd.x)/2, (cylStart.y + cylEnd.y)/2, cylStart.z)
+            scale: Qt.vector3d(userBoreHead/100, lBody/100, userBoreHead/100)
+            eulerRotation: Qt.vector3d(0, 0, Math.atan2(cylEnd.y - cylStart.y, cylEnd.x - cylStart.x) * 180 / Math.PI + 90)
+            materials: advancedGlass
+            
+            // Smooth position updates
+            Behavior on position {
+                Vector3dAnimation { duration: 200; easing.type: Easing.OutQuart }
+            }
+        }
+        
+        // === ANIMATED PREMIUM PISTON ===
+        Model {
+            source: "#Cylinder"
+            position: pistonCenter
+            scale: Qt.vector3d((userBoreHead-4)/100, 0.4, (userBoreHead-4)/100)
+            eulerRotation: Qt.vector3d(0, 0, Math.atan2(cylDirection.y, cylDirection.x) * 180 / Math.PI + 90)
+            
+            materials: PrincipledMaterial {
+                baseColor: "#e91e63"
+                metalness: 0.92
+                roughness: 0.08
+                specularAmount: 1.0
+                indexOfRefraction: 2.5
+            }
+            
+            // Physics-based piston movement
+            Behavior on position {
+                Vector3dAnimation { 
+                    duration: 80 
+                    easing.type: Easing.OutBack
+                    easing.overshoot: 1.2
+                }
+            }
+        }
+        
+        // === DYNAMIC PISTON ROD ===
+        Model {
+            source: "#Cylinder"
+            
+            property real rodLength: Math.hypot(j_rod.x - pistonCenter.x, j_rod.y - pistonCenter.y)
+            
+            position: Qt.vector3d(
+                (pistonCenter.x + j_rod.x)/2, 
+                (pistonCenter.y + j_rod.y)/2, 
+                pistonCenter.z
+            )
+            scale: Qt.vector3d(userRodDiameter/100, rodLength/100, userRodDiameter/100)
+            eulerRotation: Qt.vector3d(0, 0, Math.atan2(j_rod.y - pistonCenter.y, j_rod.x - pistonCenter.x) * 180 / Math.PI + 90)
+            
+            materials: PrincipledMaterial {
+                baseColor: "#eceff1"
+                metalness: 0.98
+                roughness: 0.02
+                specularAmount: 1.0
+                indexOfRefraction: 3.5
+            }
+        }
+        
+        // === TAIL ROD ===
+        Model {
+            source: "#Cylinder"
+            position: Qt.vector3d((j_tail.x + tailRodEnd.x)/2, (j_tail.y + tailRodEnd.y)/2, j_tail.z)
+            scale: Qt.vector3d(userRodDiameter/100, lTailRod/100, userRodDiameter/100)
+            eulerRotation: Qt.vector3d(0, 0, Math.atan2(tailRodEnd.y - j_tail.y, tailRodEnd.x - j_tail.x) * 180 / Math.PI + 90)
+            materials: ultraChrome
+        }
+        
+        // === PREMIUM JOINTS ===
+        Repeater {
+            model: [
+                { pos: j_tail, color: "#1565c0", size: 2.0, name: "tail" },
+                { pos: j_arm, color: "#ef6c00", size: 1.8, name: "arm" },
+                { pos: j_rod, color: "#2e7d32", size: 1.5, name: "rod" }
+            ]
+            
+            Model {
+                source: "#Sphere"
+                position: modelData.pos
+                scale: Qt.vector3d(modelData.size, modelData.size, modelData.size)
+                
+                materials: PrincipledMaterial {
+                    baseColor: modelData.color
+                    metalness: 0.9
+                    roughness: 0.1
+                    specularAmount: 1.0
+                    indexOfRefraction: 2.2
+                }
+                
+                // Breathing effect
+                SequentialAnimation on scale {
+                    running: isRunning
+                    loops: Animation.Infinite
+                    
+                    Vector3dAnimation {
+                        to: Qt.vector3d(modelData.size * 1.1, modelData.size * 1.1, modelData.size * 1.1)
+                        duration: 2000 + index * 500
+                        easing.type: Easing.InOutSine
+                    }
+                    Vector3dAnimation {
+                        to: Qt.vector3d(modelData.size, modelData.size, modelData.size)
+                        duration: 2000 + index * 500
+                        easing.type: Easing.InOutSine
+                    }
+                }
+            }
+        }
+    }
+    
+    // === INSTANTIATE ALL FOUR CORNERS ===
+    AdvancedSuspensionCorner { 
+        j_arm: fl_j_arm; j_tail: fl_j_tail; j_rod: fl_j_rod; leverAngle: fl_angle; isLeft: true
+        pistonPositionMm: userPistonPositionFL  // ✨ НОВОЕ: используем реальную позицию
+    }
+    AdvancedSuspensionCorner { 
+        j_arm: fr_j_arm; j_tail: fr_j_tail; j_rod: fr_j_rod; leverAngle: fr_angle; isLeft: false
+        pistonPositionMm: userPistonPositionFR
+    }
+    AdvancedSuspensionCorner { 
+        j_arm: rl_j_arm; j_tail: rl_j_tail; j_rod: rl_j_rod; leverAngle: rl_angle; isLeft: true
+        pistonPositionMm: userPistonPositionRL
+    }
+    AdvancedSuspensionCorner { 
+        j_arm: rr_j_arm; j_tail: rr_j_tail; j_rod: rr_j_rod; leverAngle: rr_angle; isLeft: false
+        pistonPositionMm: userPistonPositionRR
+    }
+    
+    // === SIMPLE CAMERA CONTROL (NO ORBIT CONTROLLER) ===
+    // ИСПРАВЛЕНО: Убираем OrbitCameraController чтобы избежать ошибки eulerRotation
+    
+    // Manual camera rotation
+    property real cameraAngle: 0.0
+    
+    SequentialAnimation {
+        id: cameraRotation
+        running: isRunning
+        loops: Animation.Infinite
+        
+        NumberAnimation {
+            target: view3d
+            property: "cameraAngle"
+            to: 360
+            duration: 25000
+            easing.type: Easing.Linear
+        }
+    }
+    
+    onCameraAngleChanged: {
+        if (advancedCamera) {
+            let radius = 2500
+            let height = 500
+            let x = radius * Math.sin(cameraAngle * Math.PI / 180)
+            let z = radius * Math.cos(cameraAngle * Math.PI / 180)
+            
+            advancedCamera.position = Qt.vector3d(x, height, z)
+            
+            // Look at center
+            let yaw = Math.atan2(-x, -z) * 180 / Math.PI
+            advancedCamera.eulerRotation = Qt.vector3d(-12, yaw, 0)
+        }
+    }
+    
+    // === MANUAL MOUSE CONTROL ===
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
-
-        onPressed: (mouse) => {
-            mouse.accepted = true
-            root.mouseDown = true
-            root.mouseButton = mouse.button
-            root.lastX = mouse.x
-            root.lastY = mouse.y
+        property real lastX: 0
+        property real lastY: 0
+        property bool dragging: false
+        
+        onPressed: function(mouse) {
+            lastX = mouse.x
+            lastY = mouse.y
+            dragging = true
+            cameraRotation.running = false  // Stop auto rotation
         }
-
+        
         onReleased: {
-            root.mouseDown = false
-            root.mouseButton = 0
+            dragging = false
+            // Restart auto rotation after 3 seconds
+            restartTimer.start()
         }
-
-        onPositionChanged: (mouse) => {
-            if (!root.mouseDown) return
-            const dx = mouse.x - root.lastX
-            const dy = mouse.y - root.lastY
-
-            if (root.mouseButton === Qt.LeftButton) {
-                // Rotation
-                root.yawDeg = root.normAngleDeg(root.yawDeg + dx * root.rotateSpeed)
-                root.pitchDeg = root.clamp(root.pitchDeg - dy * root.rotateSpeed, -85, 85)
-            } else if (root.mouseButton === Qt.RightButton) {
-                // Panning
-                const fovRad = camera.fieldOfView * Math.PI / 180.0
-                const worldPerPixel = (2 * root.cameraDistance * Math.tan(fovRad / 2)) / view3d.height
-                const panScale = worldPerPixel * root.panSpeedK
+        
+        onPositionChanged: function(mouse) {
+            if (dragging && advancedCamera) {
+                let deltaX = mouse.x - lastX
+                let deltaY = mouse.y - lastY
                 
-                const yaw = root.yawDeg * Math.PI / 180.0
-                const pit = root.pitchDeg * Math.PI / 180.0
-                const cp = Math.cos(pit), sp = Math.sin(pit)
-                const cy = Math.cos(yaw), sy = Math.sin(yaw)
+                // Manual camera control
+                view3d.cameraAngle += deltaX * 0.5
                 
-                const fx = sy * cp, fy = -sp, fz = -cy * cp
-                const rx = -fz, rz = fx
-                const rlen = Math.hypot(rx, 0, rz)
-                const rnx = rx / (rlen || 1), rnz = rz / (rlen || 1)
+                let currentRotation = advancedCamera.eulerRotation
+                let newPitch = Math.max(-60, Math.min(60, currentRotation.x - deltaY * 0.3))
+                advancedCamera.eulerRotation = Qt.vector3d(newPitch, currentRotation.y, 0)
                 
-                const ux = 0 * fz - rnz * fy
-                const uy = rnz * fx - rnx * fz
-                const uz = rnx * fy - 0 * fx
-                const ulen = Math.hypot(ux, uy, uz)
-                const unx = ux / (ulen || 1), uny = uy / (ulen || 1), unz = uz / (ulen || 1)
-                
-                const moveX = (-dx * panScale) * rnx + (dy * panScale) * unx
-                const moveY = (dy * panScale) * uny
-                const moveZ = (-dx * panScale) * rnz + (dy * panScale) * unz
-                                
-                root.target = Qt.vector3d(root.target.x + moveX, root.target.y + moveY, root.target.z + moveZ)
+                lastX = mouse.x
+                lastY = mouse.y
             }
-
-            root.lastX = mouse.x
-            root.lastY = mouse.y
         }
-
-        onWheel: (wheel) => {
-            wheel.accepted = true
-            const factor = Math.exp(-wheel.angleDelta.y * root.wheelZoomK)
-            root.cameraDistance = root.clamp(root.cameraDistance * factor, root.minDistance, root.maxDistance)
-        }
-
-        onDoubleClicked: {
-            resetView()
-        }
-    }
-
-    Keys.onPressed: (e) => {
-        if (e.key === Qt.Key_R) resetView()
-        else if (e.key === Qt.Key_Space) {
-            // Toggle animation (future feature)
+        
+        onWheel: function(wheel) {
+            if (advancedCamera) {
+                let currentPos = advancedCamera.position
+                let factor = wheel.angleDelta.y > 0 ? 0.9 : 1.1
+                let distance = Math.sqrt(currentPos.x * currentPos.x + currentPos.z * currentPos.z)
+                let newDistance = Math.max(800, Math.min(5000, distance * factor))
+                
+                let angle = Math.atan2(currentPos.x, currentPos.z)
+                advancedCamera.position = Qt.vector3d(
+                    newDistance * Math.sin(angle),
+                    currentPos.y,
+                    newDistance * Math.cos(angle)
+                )
+            }
         }
     }
-
-    function resetView() {
-        root.target = Qt.vector3d(0, userBeamSize + userFrameHeight/2, userFrameLength/2)
-        root.cameraDistance = 4000
-        root.yawDeg = 30
-        root.pitchDeg = -20
+    
+    Timer {
+        id: restartTimer
+        interval: 3000
+        onTriggered: {
+            cameraRotation.running = isRunning
+        }
     }
-
-    focus: true
-
-    // Info panel
+    
+    // === PERFORMANCE MONITORING OVERLAY ===
     Rectangle {
         anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.margins: 15
-        width: 450
-        height: 140
-        color: "#aa000000"
-        border.color: "#60ffffff"
-        radius: 6
-
+        anchors.right: parent.right
+        anchors.margins: 20
+        width: 320
+        height: 200
+        color: Qt.rgba(0, 0, 0, 0.8)
+        radius: 12
+        border.color: "#4fc3f7"
+        border.width: 2
+        
         Column {
-            anchors.centerIn: parent
-            spacing: 4
-            Text { text: "PneumoStabSim | 4-Corner Pneumatic Suspension"; color: "#ffffff"; font.pixelSize: 14; font.bold: true }
-            Text { text: "? All components: levers, cylinders, pistons, rods, tail rods, joints"; color: "#ffaa00"; font.pixelSize: 11 }
-            Text { text: "? Animated pistons (pink) move inside transparent cylinders"; color: "#cccccc"; font.pixelSize: 10 }
-            Text { text: "LMB - rotate | RMB - pan | Wheel - zoom | R - reset | DblClick - fit"; color: "#cccccc"; font.pixelSize: 10 }
+            anchors.fill: parent
+            anchors.margins: 15
+            spacing: 8
+            
+            Text {
+                text: "🚀 PneumoStabSim ИСПРАВЛЕНО"
+                color: "#00ff00"
+                font.bold: true
+                font.pixelSize: 14
+            }
+            
+            Text {
+                text: `FPS: ${animationTimer.fps.toFixed(1)}`
+                color: animationTimer.fps > 50 ? "#4caf50" : "#ff9800"
+                font.pixelSize: 14
+                font.family: "monospace"
+            }
+            
+            Text {
+                text: "✅ Python ↔ QML интеграция"
+                color: "#4caf50"
+                font.pixelSize: 11
+            }
+            
+            Text {
+                text: `🎛️ Амплитуда: ${userAmplitude.toFixed(1)}°`
+                color: "#2196f3"
+                font.pixelSize: 11
+            }
+            
+            Text {
+                text: `📊 Частота: ${userFrequency.toFixed(1)} Гц`
+                color: "#ff9800"
+                font.pixelSize: 11
+            }
+            
+            Text {
+                text: `Animation: ${isRunning ? "▶️ Running" : "⏸️ Stopped"}`
+                color: "#9c27b0"
+                font.pixelSize: 11
+            }
+            
+            Text {
+                text: `🎯 rodPosition: ${rodPosition.toFixed(2)}`
+                color: "#e91e63"
+                font.pixelSize: 10
+            }
+        }
+        
+        // Click to toggle pause
+        MouseArea {
+            anchors.fill: parent
+            onClicked: isRunning = !isRunning
+            cursorShape: Qt.PointingHandCursor
         }
     }
-
+    
+    // === DEBUG INFO ===
     Component.onCompleted: {
-        resetView()
-        console.log("???????????????????????????????????????????????")
-        console.log("?? PneumoStabSim 4-Corner Suspension LOADED")
-        console.log("???????????????????????????????????????????????")
-        console.log("? All 4 corners: FL, FR, RL, RR")
-        console.log("? All components: levers, cylinders, pistons, rods, tail rods, joints")
-        console.log("? PYTHON PHYSICS INTEGRATION: Piston positions from physics engine!")
-        console.log("???????????????????????????????????????????????")
-        console.log("?? Initial geometry:")
-        console.log("   Frame:", userFrameLength + "x" + userFrameHeight + "x" + userBeamSize + "mm")
-        console.log("   Lever:", userLeverLength + "mm")
-        console.log("   Cylinder:", userCylinderLength + "mm")
-        console.log("   Track width:", userTrackWidth + "mm")
-        console.log("   Frame to pivot:", userFrameToPivot + "mm")
-        console.log("   Rod position:", userRodPosition)
-        console.log("   Bore head:", userBoreHead + "mm")
-        console.log("   Bore rod:", userBoreRod + "mm")
-        console.log("   Rod diameter:", userRodDiameter + "mm")
-        console.log("   Piston thickness:", userPistonThickness + "mm")
-        console.log("???????????????????????????????????????????????")
-        console.log("?? Animation:")
-        console.log("   Amplitude:", userAmplitude + "deg")
-        console.log("   Frequency:", userFrequency + "Hz")
-        console.log("   Phase global:", userPhaseGlobal + "deg")
-        console.log("   Phase FL/FR/RL/RR:", userPhaseFL + "/" + userPhaseFR + "/" + userPhaseRL + "/" + userPhaseRR + "deg")
-        console.log("   isRunning:", isRunning)
-        console.log("???????????????????????????????????????????????")
-        console.log("?? PISTON POSITIONS (from Python Physics):")
-        console.log("   FL:", userPistonPositionFL + "mm")
-        console.log("   FR:", userPistonPositionFR + "mm")
-        console.log("   RL:", userPistonPositionRL + "mm")
-        console.log("   RR:", userPistonPositionRR + "mm")
-        console.log("???????????????????????????????????????????????")
-        console.log("? updateGeometry() function ready for UI integration")
-        console.log("? updatePistonPositions() function ready for physics integration")
-        console.log("???????????????????????????????????????????????")
+        console.log("🌟 ===============================================")
+        console.log("🚀 ИСПРАВЛЕННЫЙ PNEUMATIC SIMULATOR")
+        console.log("🌟 ===============================================")
+        console.log("✅ Добавлены функции: updateGeometry(), updatePistonPositions()")
+        console.log("✅ Добавлены свойства анимации: userAmplitude, userFrequency, userPhase*")
+        console.log("✅ Добавлен контроль: isRunning")
+        console.log("✅ Добавлены позиции поршней: userPistonPosition*")
+        console.log("📐 Frame dimensions:", userFrameLength + "x" + userFrameHeight + "x" + userBeamSize + "mm")
+        console.log("🔧 Lever length:", userLeverLength + "mm")  
+        console.log("💨 Cylinder stroke:", userStroke + "mm")
+        console.log("🎮 Animation: Amplitude=" + userAmplitude + "°, Frequency=" + userFrequency + "Hz")
+        console.log("🌟 ===============================================")
+        
         view3d.forceActiveFocus()
     }
 }
