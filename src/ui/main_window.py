@@ -191,6 +191,7 @@ class MainWindow(QMainWindow):
             # Try official QML first, fallback to compatible version
             qml_files = [
                 Path("assets/qml/main_official.qml"),
+                Path("assets/qml/main_fixed.qml"),  # FIXED: Version without OrbitCameraController
                 Path("assets/qml/main.qml")
             ]
             

@@ -534,11 +534,21 @@ View3D {
     
     // === ADVANCED CAMERA CONTROLLER ===
     OrbitCameraController {
-        camera: view3d.camera
+        id: cameraController
+        camera: advancedCamera  // ✅ ИСПРАВЛЕНО: правильная ссылка на камеру
         origin: Qt.vector3d(0, userFrameHeight/2, 0)
         panEnabled: true
         xInvert: false
         yInvert: false
+        
+        // Защита от ошибок инициализации
+        Component.onCompleted: {
+            if (advancedCamera && advancedCamera.eulerRotation) {
+                console.log("✅ OrbitCameraController initialized successfully")
+            } else {
+                console.error("❌ OrbitCameraController: camera or eulerRotation is null!")
+            }
+        }
     }
     
     // === PERFORMANCE MONITORING OVERLAY ===

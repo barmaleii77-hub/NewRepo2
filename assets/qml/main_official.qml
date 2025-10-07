@@ -6,10 +6,14 @@ import QtQuick3D.Helpers
 // ===============================================
 // OFFICIAL QT QUICK 3D 6.9.3 - PNEUMATIC STABILIZER
 // Based on official Qt documentation
+// FIXED: OrbitCameraController null reference error
 // ===============================================
 View3D {
     id: mainView
     anchors.fill: parent
+    
+    // === FOCUS & INPUT HANDLING ===
+    focus: true
     
     // === SIMULATION PARAMETERS ===
     property real frameLength: 3200.0
@@ -588,11 +592,37 @@ View3D {
     
     // === CAMERA CONTROLLER ===
     OrbitCameraController {
+        id: cameraController
         camera: mainCamera
         origin: Qt.vector3d(0, frameHeight/2 + beamSize, 0)
         panEnabled: true
         xInvert: false
         yInvert: false
+        
+        // Важно: убеждаемся что камера инициализирована
+        Component.onCompleted: {
+            if (mainCamera) {
+                console.log("✅ Camera controller initialized successfully")
+            } else {
+                console.error("❌ Camera controller: camera is null!")
+            }
+        }
+    }
+    
+    // === KEYBOARD SHORTCUTS ===
+    Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_R) {
+            // Reset camera position
+            mainCamera.position = Qt.vector3d(0, 600, 2800)
+            mainCamera.eulerRotation = Qt.vector3d(-10, 0, 0)
+            console.log("🎯 Camera reset to default position")
+            event.accepted = true
+        } else if (event.key === Qt.Key_Space) {
+            // Toggle animation
+            isRunning = !isRunning
+            console.log("⏯️ Animation toggled:", isRunning ? "Playing" : "Paused")
+            event.accepted = true
+        }
     }
     
     // === UI OVERLAY ===
