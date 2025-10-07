@@ -532,22 +532,100 @@ View3D {
         pistonPositionMm: userPistonPositionRR
     }
     
-    // === ADVANCED CAMERA CONTROLLER ===
-    OrbitCameraController {
-        id: cameraController
-        camera: advancedCamera  // ✅ ИСПРАВЛЕНО: правильная ссылка на камеру
-        origin: Qt.vector3d(0, userFrameHeight/2, 0)
-        panEnabled: true
-        xInvert: false
-        yInvert: false
+    // === SIMPLE CAMERA CONTROL (NO ORBIT CONTROLLER) ===
+    // ИСПРАВЛЕНО: Убираем OrbitCameraController чтобы избежать ошибки eulerRotation
+    
+    // Manual camera rotation
+    property real cameraAngle: 0.0
+    
+    SequentialAnimation {
+        id: cameraRotation
+        running: isRunning
+        loops: Animation.Infinite
         
-        // Защита от ошибок инициализации
-        Component.onCompleted: {
-            if (advancedCamera && advancedCamera.eulerRotation) {
-                console.log("✅ OrbitCameraController initialized successfully")
-            } else {
-                console.error("❌ OrbitCameraController: camera or eulerRotation is null!")
+        NumberAnimation {
+            target: view3d
+            property: "cameraAngle"
+            to: 360
+            duration: 25000
+            easing.type: Easing.Linear
+        }
+    }
+    
+    onCameraAngleChanged: {
+        if (advancedCamera) {
+            let radius = 2500
+            let height = 500
+            let x = radius * Math.sin(cameraAngle * Math.PI / 180)
+            let z = radius * Math.cos(cameraAngle * Math.PI / 180)
+            
+            advancedCamera.position = Qt.vector3d(x, height, z)
+            
+            // Look at center
+            let yaw = Math.atan2(-x, -z) * 180 / Math.PI
+            advancedCamera.eulerRotation = Qt.vector3d(-12, yaw, 0)
+        }
+    }
+    
+    // === MANUAL MOUSE CONTROL ===
+    MouseArea {
+        anchors.fill: parent
+        property real lastX: 0
+        property real lastY: 0
+        property bool dragging: false
+        
+        onPressed: function(mouse) {
+            lastX = mouse.x
+            lastY = mouse.y
+            dragging = true
+            cameraRotation.running = false  // Stop auto rotation
+        }
+        
+        onReleased: {
+            dragging = false
+            // Restart auto rotation after 3 seconds
+            restartTimer.start()
+        }
+        
+        onPositionChanged: function(mouse) {
+            if (dragging && advancedCamera) {
+                let deltaX = mouse.x - lastX
+                let deltaY = mouse.y - lastY
+                
+                // Manual camera control
+                view3d.cameraAngle += deltaX * 0.5
+                
+                let currentRotation = advancedCamera.eulerRotation
+                let newPitch = Math.max(-60, Math.min(60, currentRotation.x - deltaY * 0.3))
+                advancedCamera.eulerRotation = Qt.vector3d(newPitch, currentRotation.y, 0)
+                
+                lastX = mouse.x
+                lastY = mouse.y
             }
+        }
+        
+        onWheel: function(wheel) {
+            if (advancedCamera) {
+                let currentPos = advancedCamera.position
+                let factor = wheel.angleDelta.y > 0 ? 0.9 : 1.1
+                let distance = Math.sqrt(currentPos.x * currentPos.x + currentPos.z * currentPos.z)
+                let newDistance = Math.max(800, Math.min(5000, distance * factor))
+                
+                let angle = Math.atan2(currentPos.x, currentPos.z)
+                advancedCamera.position = Qt.vector3d(
+                    newDistance * Math.sin(angle),
+                    currentPos.y,
+                    newDistance * Math.cos(angle)
+                )
+            }
+        }
+    }
+    
+    Timer {
+        id: restartTimer
+        interval: 3000
+        onTriggered: {
+            cameraRotation.running = isRunning
         }
     }
     
